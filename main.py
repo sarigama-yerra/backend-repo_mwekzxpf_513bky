@@ -51,9 +51,22 @@ def get_schema():
 
 # Products
 @app.get("/products", response_model=List[ProductResponse])
-def list_products():
-    docs = get_documents("product")
-    results = []
+def list_products(category: Optional[str] = None, q: Optional[str] = None, sort: Optional[str] = None):
+    filt = {}
+    if category:
+        filt["category"] = category
+    if q:
+        filt["$or"] = [
+            {"title": {"$regex": q, "$options": "i"}},
+            {"description": {"$regex": q, "$options": "i"}},
+        ]
+    docs = list(db["product"].find(filt))
+    # sorting
+    if sort == "price_asc":
+        docs.sort(key=lambda d: float(d.get("price", 0)))
+    elif sort == "price_desc":
+        docs.sort(key=lambda d: float(d.get("price", 0)), reverse=True)
+    results: List[ProductResponse] = []
     for d in docs:
         d["id"] = str(d.pop("_id"))
         results.append(ProductResponse(**d))
@@ -63,6 +76,13 @@ def list_products():
 def create_product(payload: ProductCreate):
     new_id = create_document("product", payload)
     return new_id
+
+@app.get("/categories", response_model=List[str])
+def list_categories():
+    cats = db["product"].distinct("category")
+    cats = [c for c in cats if isinstance(c, str)]
+    cats.sort()
+    return cats
 
 
 # Cart
@@ -137,6 +157,71 @@ def get_order(order_id: str):
         return OrderResponse(**doc)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid order id")
+
+
+# Seed demo electronics catalog
+@app.post("/seed/electronics")
+def seed_electronics():
+    demo_products = [
+        {
+            "title": "Pro Series 55\" 4K UHD Smart TV",
+            "description": "Ultra-thin bezel, HDR10+, Dolby Vision, 120Hz.",
+            "price": 599.99,
+            "category": "tv",
+            "image": "https://images.unsplash.com/photo-1593359677879-38f8b1ba30c3?q=80&w=1200&auto=format&fit=crop"
+        },
+        {
+            "title": "Aurora X1 Gaming Laptop (RTX 4070, 16GB, 1TB)",
+            "description": "14-core CPU, QHD 165Hz display, per-key RGB.",
+            "price": 1699.0,
+            "category": "laptop",
+            "image": "https://images.unsplash.com/photo-1517336714731-489689fd1ca8?q=80&w=1200&auto=format&fit=crop"
+        },
+        {
+            "title": "PixelWave Pro Smartphone",
+            "description": "6.7\" OLED 120Hz, triple camera with 5x telephoto.",
+            "price": 999.0,
+            "category": "phone",
+            "image": "https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?q=80&w=1200&auto=format&fit=crop"
+        },
+        {
+            "title": "Nimbus ANC Wireless Headphones",
+            "description": "Adaptive noise cancelling, 40h battery, LDAC.",
+            "price": 249.0,
+            "category": "audio",
+            "image": "https://images.unsplash.com/photo-1518444028785-8fce0a366e2f?q=80&w=1200&auto=format&fit=crop"
+        },
+        {
+            "title": "IonCharge 65W GaN USB-C Charger",
+            "description": "Dual USB-C PD, foldable prongs, travel-ready.",
+            "price": 39.99,
+            "category": "accessories",
+            "image": "https://images.unsplash.com/photo-1587825140400-67bc116ed27b?q=80&w=1200&auto=format&fit=crop"
+        },
+        {
+            "title": "Velocity Series Mechanical Keyboard",
+            "description": "Hot-swappable switches, aluminum frame, tri-mode.",
+            "price": 139.0,
+            "category": "gaming",
+            "image": "https://images.unsplash.com/photo-1517336714731-489689fd1ca8?q=80&w=1200&auto=format&fit=crop"
+        },
+        {
+            "title": "HyperSound 2.1 Bluetooth Soundbar",
+            "description": "Wireless subwoofer, HDMI eARC, virtual surround.",
+            "price": 299.0,
+            "category": "audio",
+            "image": "https://images.unsplash.com/photo-1616348436168-de43ad0db179?q=80&w=1200&auto=format&fit=crop"
+        }
+    ]
+
+    inserted = 0
+    for p in demo_products:
+        # Idempotent: avoid duplicates by matching title
+        exists = db["product"].find_one({"title": p["title"]})
+        if not exists:
+            create_document("product", Product(**p))
+            inserted += 1
+    return {"inserted": inserted, "total": len(demo_products)}
 
 
 @app.get("/test")
